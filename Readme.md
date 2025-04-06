@@ -28,7 +28,7 @@ Welcome to **Project Fire**! This project is designed to [briefly describe the p
 Run the application:
 
 ```bash
-npm start
+npm expo start --tunnel
 ```
 
 ## Contributing
