@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from "react";
-import { View, Text, TouchableOpacity } from "react-native";
+import { View, Text, TouchableOpacity, PanResponder } from "react-native";
 import { GLView } from "expo-gl";
 import { Renderer } from "expo-three";
 import * as THREE from "three";
@@ -8,7 +8,20 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 
 export default function App() {
   const timeout = useRef();
-  const [glKey, setGlKey] = useState(0); // Trigger for re-rendering GLView
+  const [glKey, setGlKey] = useState(0);
+  const [rotationEnabled, setRotationEnabled] = useState(false);
+  const [cameraAngle, setCameraAngle] = useState({ x: 0, y: 0 });
+
+  // Handle swipe rotation at the endpoint
+  const panResponder = PanResponder.create({
+    onMoveShouldSetPanResponder: () => rotationEnabled,
+    onPanResponderMove: (_, gesture) => {
+      if (!rotationEnabled) return;
+      const newY = cameraAngle.y - gesture.dx * 0.005;
+      const newX = cameraAngle.x - gesture.dy * 0.005;
+      setCameraAngle({ x: newX, y: newY });
+    },
+  });
 
   useEffect(() => {
     return () => {
@@ -20,10 +33,9 @@ export default function App() {
 
   const onContextCreate = async (gl) => {
     const { drawingBufferWidth: width, drawingBufferHeight: height } = gl;
-
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
-    camera.position.set(0, 1000, 0); // Prevent initial flicker
+    camera.position.set(0, 1000, 0); // Initial hide
 
     const renderer = new Renderer({ gl });
     renderer.setSize(width, height);
@@ -34,6 +46,7 @@ export default function App() {
     dirLight.position.set(5, 5, 5);
     scene.add(dirLight);
 
+    // Optional helpers
     const gridHelper = new THREE.GridHelper(10, 10);
     scene.add(gridHelper);
     const axesHelper = new THREE.AxesHelper(2);
@@ -50,23 +63,20 @@ export default function App() {
       uri,
       (gltf) => {
         const model = gltf.scene;
-
         const startPoint = model.getObjectByName("startingpoint");
         const middlePoint = model.getObjectByName("middlepoint");
         const endPoint = model.getObjectByName("endpoint");
 
         if (!startPoint || !middlePoint || !endPoint) {
-          console.error("🚫 One or more camera points not found!");
+          console.error("❌ Points not found!");
           return;
         }
 
-        const speedFactor = 0.005;
-
-        const starting = startPoint.position.clone();
+        const start = startPoint.position.clone();
         const middle = middlePoint.position.clone();
         const end = endPoint.position.clone();
 
-        camera.position.copy(starting);
+        camera.position.copy(start);
         camera.lookAt(middle);
 
         model.traverse((child) => {
@@ -84,49 +94,53 @@ export default function App() {
         scene.add(model);
 
         let phase = 0;
-        let phaseStartTime = performance.now();
+        let phaseStart = performance.now();
+        const speed = 0.005;
 
         const render = () => {
           const now = performance.now();
 
           switch (phase) {
-            case 0:
-              if (now - phaseStartTime >= 5000) {
+            case 0: // Wait at starting point
+              if (now - phaseStart > 500) {
                 phase = 1;
-                phaseStartTime = now;
+                phaseStart = now;
               }
               break;
+
             case 1: {
+              // Move to middle point
               const distance = camera.position.distanceTo(middle);
-              const t = Math.min(speedFactor * distance, 1);
-              camera.position.lerp(middle, t);
+              camera.position.lerp(middle, speed);
               camera.lookAt(middle);
               if (distance < 0.05) {
                 phase = 2;
-                phaseStartTime = now;
+                phaseStart = now;
               }
               break;
             }
-            case 2:
-              if (now - phaseStartTime >= 100) {
-                phase = 3;
-                phaseStartTime = now;
-              }
-              break;
-            case 3:
+
+            case 2: // Look at end point
               camera.lookAt(end);
-              if (now - phaseStartTime >= 100) {
-                phase = 4;
-                phaseStartTime = now;
-              }
+              phase = 3;
               break;
-            case 4: {
+
+            case 3: {
+              // Move to end point
               const distance = camera.position.distanceTo(end);
-              const t = Math.min(speedFactor * distance, 1);
-              camera.position.lerp(end, t);
+              camera.position.lerp(end, speed);
               camera.lookAt(end);
+              if (distance < 0.05) {
+                phase = 4;
+                setRotationEnabled(true);
+              }
               break;
             }
+
+            case 4: // Free look
+              camera.rotation.x = cameraAngle.x;
+              camera.rotation.y = cameraAngle.y;
+              break;
           }
 
           timeout.current = requestAnimationFrame(render);
@@ -134,22 +148,26 @@ export default function App() {
           gl.endFrameEXP();
         };
 
-        setTimeout(render, 100);
+        render();
       },
       undefined,
       (error) => {
-        console.error("❌ Model load error:", error);
+        console.error("🚨 Model Load Error:", error);
       }
     );
   };
 
   return (
-    <View style={{ flex: 1 }}>
-      {/* 🔁 Reload Button */}
+    <View style={{ flex: 1 }} {...panResponder.panHandlers}>
+      {/* Reload Button */}
       <TouchableOpacity
-        onPress={() => setGlKey((prev) => prev + 1)}
+        onPress={() => {
+          setGlKey((prev) => prev + 1);
+          setCameraAngle({ x: 0, y: 0 });
+          setRotationEnabled(false);
+        }}
         style={{
-          backgroundColor: "#333",
+          backgroundColor: "#222",
           padding: 10,
           position: "absolute",
           top: 40,
@@ -161,7 +179,7 @@ export default function App() {
         <Text style={{ color: "#fff", fontWeight: "bold" }}>🔄 Reload</Text>
       </TouchableOpacity>
 
-      {/* 🎥 GLView with dynamic key */}
+      {/* GLView */}
       <GLView
         key={glKey}
         style={{ flex: 1 }}
